@@ -36,6 +36,7 @@ function render_header(string $title): void
                 ['/admin/reports.php',      'Reports',        'file-earmark-bar-graph'],
                 ['/admin/users.php',        'Users',          'people'],
                 ['/admin/logs.php',         'Logs',           'activity'],
+                ['/admin/backup.php',       'Backup',         'shield-check'],
             ],
             'IETW' => [
                 ['/IETW/items.php',        'View Items',      'boxes'],
