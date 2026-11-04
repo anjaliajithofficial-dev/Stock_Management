@@ -1,0 +1,36 @@
+[2026-09-25_14-23-43] Backup started 
+[2026-09-25_14-23-43] Backup OK 
+[2026-09-25_14-53-08] Backup started 
+[2026-09-25_14-53-08] Backup OK 
+[2026-09-27_10-29-28] Backup started 
+^C[2026-09-29_11-26-20] Backup started 
+^C[2026-09-30_15-20-30] Backup started 
+[2026-09-30_15-20-30] Backup OK 
+[2026-10-05_09-07-50] Backup started 
+[2026-10-05_09-07-50] Backup OK 
+[2026-10-06_09-16-35] Backup started 
+[2026-10-06_09-16-35] Backup OK 
+[2026-10-07_09-05-31] Backup started 
+mysqldump: Got error: 2003: Can't connect to MySQL server on 'localhost:3306' (10061) when trying to connect
+[2026-10-07_09-05-31] Backup FAILED 
+[2026-10-08_09-14-37] Backup started 
+[2026-10-09_17-52-03] Backup started 
+^C[2026-10-10_09-42-08] Backup started 
+^C[2026-10-11_09-54-58] Backup started 
+mysqldump: Got error: 2003: Can't connect to MySQL server on 'localhost:3306' (10061) when trying to connect
+[2026-10-11_09-54-58] Backup FAILED 
+[2026-10-25_11-23-41] Backup started 
+mysqldump: Got error: 2003: Can't connect to MySQL server on 'localhost:3306' (10061) when trying to connect
+[2026-10-25_11-23-41] Backup FAILED 
+[2026-10-26_05-41-11] Backup started 
+mysqldump: Got error: 2003: Can't connect to MySQL server on 'localhost:3306' (10061) when trying to connect
+[2026-10-26_05-41-11] Backup FAILED 
+[2026-10-27_06-24-02] Backup started 
+^C[2026-10-28_05-18-03] Backup started 
+mysqldump: Got error: 2003: Can't connect to MySQL server on 'localhost:3306' (10061) when trying to connect
+[2026-10-28_05-18-03] Backup FAILED 
+[2026-10-29_06-18-38] Backup started 
+^C[2026-11-01_10-05-52] Backup started 
+^C[2026-11-02_17-44-34] Backup started 
+^C[2026-11-03_17-38-02] Backup started 
+^C[2026-11-04_14-52-01] Backup started 
