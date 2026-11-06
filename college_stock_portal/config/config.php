@@ -1,11 +1,12 @@
 <?php
-session_start();
+
 date_default_timezone_set('Asia/Kolkata');
 
 // ---- Paths ----
 define('BASE_PATH', dirname(__DIR__));
 define('BASE_URL', '/New%20folder/college_stock_portal');
 define('UPLOAD_PATH', BASE_PATH . '/uploads/');
+define('UPLOAD_DIR', rtrim(UPLOAD_PATH, '/\\'));   // used by upload_file() in functions.php
 
 // ---- DB credentials ----
 define('DB_HOST', 'localhost');

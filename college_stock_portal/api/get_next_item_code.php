@@ -19,13 +19,10 @@ foreach ($words as $w) {
 $prefix = substr($prefix, 0, 6);
 
 // Find highest existing number for this prefix
-$like = $prefix . '-%';
-$rows = rows("SELECT item_code FROM items WHERE item_code LIKE ? ORDER BY item_code DESC LIMIT 100", [$like]);
-$max = 0;
-foreach ($rows as $r) {
-    $parts = explode('-', $r['item_code']);
-    $num = (int)end($parts);
-    if ($num > $max) $max = $num;
-}
-
-echo json_encode(['code' => $prefix . '-' . str_pad((string)($max + 1), 3, '0', STR_PAD_LEFT)]);
+$row  = one(
+    "SELECT MAX(CAST(SUBSTRING_INDEX(item_code, '-', -1) AS UNSIGNED)) AS mx
+     FROM items WHERE item_code LIKE ?",
+    [$prefix . '-%']
+);
+$next = (int)($row['mx'] ?? 0) + 1;
+echo json_encode(['code' => $prefix . '-' . str_pad((string)$next, 3, '0', STR_PAD_LEFT)]);

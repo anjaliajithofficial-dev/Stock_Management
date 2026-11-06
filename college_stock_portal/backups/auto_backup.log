@@ -34,3 +34,12 @@ mysqldump: Got error: 2003: Can't connect to MySQL server on 'localhost:3306' (1
 ^C[2026-11-02_17-44-34] Backup started 
 ^C[2026-11-03_17-38-02] Backup started 
 ^C[2026-11-04_14-52-01] Backup started 
+[2026-11-05_13-32-20] Backup started 
+[2026-11-05_13-32-20] Backup OK 
+[2026-11-05_14-25-30] Backup started 
+[2026-11-05_14-25-30] Backup OK 
+[2026-11-05_19-42-20] Backup started 
+[2026-11-05_19-42-20] Backup OK 
+^C[2026-11-06_09-21-39] Backup started 
+mysqldump: Got error: 2003: Can't connect to MySQL server on 'localhost:3306' (10061) when trying to connect
+[2026-11-06_09-21-39] Backup FAILED - exit code 2, size 0 

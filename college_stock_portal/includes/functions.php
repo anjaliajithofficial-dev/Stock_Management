@@ -169,11 +169,10 @@ function visible_request_status(array $request, ?array $viewer = null): string
 
     if ($role === 'DEPARTMENT') {
         return match ($status) {
-            'PENDING_IETW', 'CONSOLIDATED_BY_IETW', 'REJECTED_BY_GSSSR' => 'Pending',
+            'PENDING_IETW', 'CONSOLIDATED_BY_IETW', 'REJECTED_BY_GSSSR', 'CONSOLIDATED' => 'Pending',
             'APPROVED_BY_GSSSR', 'PARTIALLY_APPROVED_BY_GSSSR' => 'Approved',
             'PARTIALLY_ISSUED' => 'Partially Issued',
             'ISSUED' => 'Issued',
-            'CONSOLIDATED' => 'Consolidated (Archived)',
             default => $status,
         };
     }
@@ -190,7 +189,6 @@ function request_status_badge(string $status): string
         'Partially Issued' => 'text-bg-info',
         'PARTIALLY_APPROVED_BY_GSSSR' => 'text-bg-warning',
         'REJECTED_BY_GSSSR' => 'text-bg-danger',
-        'CONSOLIDATED' => 'text-bg-secondary',
         default => 'text-bg-secondary',
     };
     return '<span class="badge ' . $class . '">' . e($status) . '</span>';
@@ -223,5 +221,24 @@ function notify_request_stakeholders(int $requestId, string $message, string $ti
 {
     foreach (request_stakeholder_ids($requestId) as $userId) {
         create_notification($userId, $title, $message);
+    }
+}
+
+/**
+ * Get the count of unread notifications for a user.
+ */
+function unread_notification_count(?int $userId = null): int {
+    if ($userId === null) {
+        $userId = current_user()['id'] ?? 0;
+    }
+    if (!$userId) return 0;
+
+    try {
+        $db = Database::conn();
+        $stmt = $db->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0");
+        $stmt->execute([$userId]);
+        return (int)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return 0; // Silently fail if table doesn't exist yet
     }
 }

@@ -53,7 +53,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
 
         // Create consolidated request (CAC department ID 7, adjust if needed)
-        $consolidatedDeptId = 7;
+        // consolidate.php, replace: $consolidatedDeptId = 7;
+$adminDept = one('SELECT id FROM departments WHERE code = "ADMIN"');
+if (!$adminDept) throw new RuntimeException('ADMIN department is missing.');
+$consolidatedDeptId = (int)$adminDept['id'];
         $consolidatedRequestNo = next_request_number();
         $purpose = 'Consolidated request from multiple departments – ' . date('Y-m-d H:i:s');
         $ietwRemarks = trim($_POST['consolidated_remarks'] ?? '');
@@ -83,6 +86,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $placeholders = implode(',', array_fill(0, count($sourceIds), '?'));
         $pdo->prepare("UPDATE requests SET status='CONSOLIDATED', ietw_processed_by=?, ietw_processed_at=NOW(), is_consolidated=1 WHERE id IN ($placeholders)")
             ->execute(array_merge([current_user()['id']], $sourceIds));
+
+        // Notify GSSSR users
+        $gsssrUsers = rows('SELECT id FROM users WHERE role = "GSSSR" AND status = "ACTIVE"');
+        foreach ($gsssrUsers as $gsssr) {
+            create_notification($gsssr['id'], 'Consolidated Request Awaiting Approval', 'IETW consolidated all pending requests into request #' . $consolidatedRequestNo . '. Please review.');
+        }
 
         $pdo->commit();
         notify_request_stakeholders($newId, 'All pending requests consolidated into one request #' . $consolidatedRequestNo, 'All Requests Consolidated');

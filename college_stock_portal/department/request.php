@@ -48,6 +48,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($qty <= 0) throw new RuntimeException('Requested quantity must be positive integer.');
             $stmt->execute([$requestId, (int)$itemId, $qty, trim($_POST['justification'][$itemId] ?? '')]);
         }
+                // Notify all IETW users
+        $ietwUsers = rows('SELECT id FROM users WHERE role = "IETW" AND status = "ACTIVE"');
+        foreach ($ietwUsers as $ietw) {
+            create_notification($ietw['id'], 'New Request Pending', 'Department submitted a new request (' . $requestNo . ') that needs consolidation.');
+        }
+
         $pdo->commit();
         log_activity('Created request ' . $requestNo);
         flash('success', 'Request submitted to IETW.');

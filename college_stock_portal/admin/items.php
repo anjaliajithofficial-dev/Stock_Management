@@ -9,22 +9,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'] ?? '';
 
         if ($action === 'create') {
+            $qty = max(0, (int)($_POST['quantity'] ?? 0));
+            $pdo->beginTransaction();
             $invoice = upload_file($_FILES['invoice'] ?? [], 'invoices', ['pdf','jpg','jpeg','png']);
             $stmt = $pdo->prepare('INSERT INTO items (item_code,item_name,category_id,quantity,unit,unit_price,minimum_stock,storage_location,description,invoice_path,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+            // quantity starts at 0; the opening stock goes through record_stock_transaction so it is logged once
             $stmt->execute([
                 trim($_POST['item_code']),
                 trim($_POST['item_name']),
-                $_POST['category_id'],
-                (int)$_POST['quantity'],
+                (int)$_POST['category_id'],
+                0,
                 trim($_POST['unit']),
-                (int)$_POST['unit_price'],
-                (int)$_POST['minimum_stock'],
-                trim($_POST['storage_location']),
-                trim($_POST['description']),
+                round((float)($_POST['unit_price'] ?? 0), 2),
+                max(0, (int)($_POST['minimum_stock'] ?? 0)),
+                trim($_POST['storage_location'] ?? ''),
+                trim($_POST['description'] ?? ''),
                 $invoice,
                 current_user()['id']
             ]);
-            record_stock_transaction((int)$pdo->lastInsertId(), 'INWARD', (int)$_POST['quantity'], 'Opening stock');
+            $newId = (int)$pdo->lastInsertId();
+            if ($qty > 0) {
+                record_stock_transaction($newId, 'INWARD', (float)$qty, 'Opening stock');
+            }
+            $pdo->commit();
             log_activity('Created item ' . $_POST['item_code']);
             flash('success', 'Item added.');
         }
@@ -36,12 +43,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([
                 trim($_POST['item_code']),
                 trim($_POST['item_name']),
-                $_POST['category_id'],
+                (int)$_POST['category_id'],
                 trim($_POST['unit']),
-                (int)$_POST['unit_price'],
-                (int)$_POST['minimum_stock'],
-                trim($_POST['storage_location']),
-                trim($_POST['description']),
+                round((float)($_POST['unit_price'] ?? 0), 2),
+                max(0, (int)($_POST['minimum_stock'] ?? 0)),
+                trim($_POST['storage_location'] ?? ''),
+                trim($_POST['description'] ?? ''),
                 (int)$_POST['id']
             ]);
             log_activity('Updated item ' . $_POST['item_code']);
@@ -59,15 +66,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($hasTransactions || $hasRequests) {
                 $pdo->prepare('UPDATE items SET status="INACTIVE", deleted_at=NOW(), archived_at=NOW(), archived_by=?, archive_reason=?, deletion_approval_status="APPROVED_BY_GSSSR" WHERE id=?')
                     ->execute([current_user()['id'], $reason, $itemId]);
-                log_activity('Deleted item from active list ID ' . $itemId . ' | Historical records preserved | Reason: ' . $reason);
-                flash('warning', 'Item removed from active list. Historical transactions and requests were preserved.');
+                log_activity('Archived item ID ' . $itemId . ' | Historical records preserved | Reason: ' . $reason);
+                flash('warning', 'Item removed from the active list. Its history was kept for the records.');
             } else {
                 $pdo->prepare('DELETE FROM items WHERE id=?')->execute([$itemId]);
                 log_activity('Permanently deleted item ID ' . $itemId . ' | Reason: ' . $reason);
-                flash('success', 'Item deleted permanently.');
+                flash('success', 'Item deleted permanently (it had no history).');
             }
         }
+    } catch (PDOException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        flash('danger', $e->getCode() === '23000' ? 'That item code already exists. Use a different code.' : 'Database error while saving the item.');
     } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         flash('danger', $e->getMessage());
     }
     redirect('/admin/items.php');
@@ -78,7 +89,7 @@ $category = $_GET['category'] ?? '';
 $low = isset($_GET['low']);
 $params = [];
 $where = 'WHERE i.deleted_at IS NULL AND i.status = "ACTIVE"';
-if ($category !== '') { $where .= ' AND i.category_id=?'; $params[] = $category; }
+if ($category !== '') { $where .= ' AND i.category_id=?'; $params[] = (int)$category; }
 if ($low) { $where .= ' AND i.quantity < i.minimum_stock'; }
 $items = rows("SELECT i.*, c.name category_name FROM items i JOIN categories c ON c.id=i.category_id $where ORDER BY i.item_name", $params);
 
@@ -104,9 +115,9 @@ $itemModals = '';
       <td><?= e($i['item_code']) ?></td>
       <td><?= e($i['item_name']) ?></td>
       <td><?= e($i['category_name']) ?></td>
-      <td><?= e((int)$i['quantity']) ?></td>
+      <td><?= e((string)(int)$i['quantity']) ?></td>
       <td><?= e($i['unit']) ?></td>
-      <td><?= (int)$i['unit_price'] > 0 ? e(number_format((int)$i['unit_price'], 0)) : '<span class="text-muted">-</span>' ?></td>
+      <td><?= (float)$i['unit_price'] > 0 ? e(number_format((float)$i['unit_price'], 2)) : '<span class="text-muted">-</span>' ?></td>
       <td><?= e($i['storage_location']) ?></td>
       <td><?= stock_badge($i) ?></td>
       <td class="d-flex gap-1 flex-wrap">
@@ -116,12 +127,12 @@ $itemModals = '';
     </tr>
     <?php ob_start(); ?>
     <div class="modal fade" id="edit<?= $i['id'] ?>" tabindex="-1"><div class="modal-dialog modal-lg"><form method="post" class="modal-content"><?php csrf_field(); ?><input type="hidden" name="action" value="update"><input type="hidden" name="id" value="<?= $i['id'] ?>"><?php include __DIR__ . '/../includes/item_form.php'; ?></form></div></div>
-    
+
     <div class="modal fade" id="deleteModal<?= $i['id'] ?>" tabindex="-1">
       <div class="modal-dialog">
         <div class="modal-content border-0 shadow-lg rounded-4">
           <div class="modal-header border-0" style="background: linear-gradient(135deg, #f56565, #e53e3e);">
-            <h5 class="modal-title text-white"><i class="bi bi-exclamation-triangle-fill me-2"></i>Confirm Deletion</h5>
+            <h5 class="modal-title text-white"><i class="bi bi-exclamation-triangle-fill me-2"></i>Confirm Removal</h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
           </div>
           <form method="post">
@@ -129,14 +140,14 @@ $itemModals = '';
             <input type="hidden" name="action" value="delete">
             <input type="hidden" name="id" value="<?= $i['id'] ?>">
             <div class="modal-body">
-              <p>Are you sure you want to delete <strong><?= e($i['item_name']) ?></strong>?</p>
-              <p class="text-secondary small">This action cannot be undone.</p>
-              <label class="form-label">Reason for deletion <span class="text-danger">*</span></label>
-              <textarea name="delete_reason" class="form-control" rows="3" placeholder="Why is this item being deleted?" required></textarea>
+              <p>Remove <strong><?= e($i['item_name']) ?></strong> from the active list?</p>
+              <p class="text-secondary small">Items with stock or request history are archived (history kept). Items with no history are deleted permanently.</p>
+              <label class="form-label">Reason <span class="text-danger">*</span></label>
+              <textarea name="delete_reason" class="form-control" rows="3" placeholder="Why is this item being removed?" required></textarea>
             </div>
             <div class="modal-footer border-0 bg-transparent">
               <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-              <button type="submit" class="btn btn-danger px-4"><i class="bi bi-trash3 me-1"></i>Delete Permanently</button>
+              <button type="submit" class="btn btn-danger px-4"><i class="bi bi-trash3 me-1"></i>Remove Item</button>
             </div>
           </form>
         </div>
@@ -150,44 +161,5 @@ $itemModals = '';
 <?= $itemModals ?>
 
 <div class="modal fade" id="itemModal" tabindex="-1"><div class="modal-dialog modal-lg"><form method="post" enctype="multipart/form-data" class="modal-content"><?php csrf_field(); ?><input type="hidden" name="action" value="create"><?php $i = []; include __DIR__ . '/../includes/item_form.php'; ?></form></div></div>
-
-<script>
-$(document).ready(function() {
-    console.log("Document ready – script loaded");
-    
-    // When the Add Item modal is opened, attach event to the dropdown
-    $('#itemModal').on('shown.bs.modal', function() {
-        console.log("Modal opened");
-        var $catSelect = $('#itemModal select[name="category_id"]');
-        console.log("Found category select:", $catSelect.length);
-        $catSelect.off('change').on('change', function() {
-            var catId = $(this).val();
-            console.log("Category changed to:", catId);
-            var $codeField = $('#itemModal input[name="item_code"]');
-            if (!catId) {
-                $codeField.val('');
-                return;
-            }
-            $.ajax({
-                url: BASE_URL + '/api/get_next_item_code.php',
-                data: { category_id: catId },
-                dataType: 'json',
-                success: function(res) {
-                    console.log("API response:", res);
-                    if (res.code) {
-                        $codeField.val(res.code);
-                    } else {
-                        $codeField.val('');
-                        alert("Error: " + (res.error || "Unknown"));
-                    }
-                },
-                error: function(xhr, status, err) {
-                    console.error("AJAX error:", status, err);
-                    alert("AJAX failed: " + status);
-                }
-            });
-        });
-    });
-});
-</script>
+<?php /* Item-code auto-generation is handled once, in assets/js/app.js (data-autocode-target). */ ?>
 <?php render_footer(); ?>

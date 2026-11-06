@@ -31,12 +31,11 @@ function render_header(string $title): void
                 ['/admin/items.php',        'Items',          'boxes'],
                 ['/admin/categories.php',   'Categories',     'tags'],
                 ['/admin/requests.php',     'Approval Desk',  'clipboard-check'],
-                ['/admin/activities.php',   'Dept Activity',  'clipboard-data'],
-                ['/admin/transactions.php', 'Transactions',   'arrow-left-right'],
                 ['/admin/reports.php',      'Reports',        'file-earmark-bar-graph'],
                 ['/admin/users.php',        'Users',          'people'],
                 ['/admin/logs.php',         'Logs',           'activity'],
                 ['/admin/backup.php',       'Backup',         'shield-check'],
+                ['/profile.php',            'Profile',        'person-circle'],
             ],
             'IETW' => [
                 ['/IETW/items.php',        'View Items',      'boxes'],
@@ -45,11 +44,13 @@ function render_header(string $title): void
                 ['/IETW/consolidate.php',  'Consolidate',     'layers'],
                 ['/IETW/allocate.php',     'Distribution',    'share'],
                 ['/IETW/reports.php',      'Reports',         'file-earmark-bar-graph'],
+                ['/profile.php',           'Profile',         'person-circle'],
             ],
             'DEPARTMENT' => [
                 ['/department/request.php', 'New Request', 'cart-plus'],
                 ['/department/history.php', 'History',     'clock-history'],
                 ['/department/inventory.php', 'My Stock',  'box-seam'],
+                ['/profile.php',            'Profile',        'person-circle'],
             ],
         ];
 
@@ -59,11 +60,26 @@ function render_header(string $title): void
         }
 
         echo '</ul>';
+        
         $badgeClass = match ($role) {
             'GSSSR' => 'bg-warning text-dark',
             'IETW'  => 'bg-info text-dark',
             default => 'bg-secondary',
         };
+
+        // Get unread count safely
+        $unread = 0;
+        if (function_exists('unread_notification_count')) {
+            $unread = unread_notification_count($u['id']);
+        }
+
+        // ALWAYS show the bell, only show badge if $unread > 0
+        echo '<a class="nav-link position-relative me-3 text-white" href="' . $base . '/notifications.php" title="Notifications">';
+        echo '<i class="bi bi-bell fs-5"></i>';
+        if ($unread > 0) {
+            echo '<span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="font-size:0.65rem;">' . $unread . '</span>';
+        }
+        echo '</a>';
 
         echo '<span class="navbar-text me-3">'
            . e($u['name'])

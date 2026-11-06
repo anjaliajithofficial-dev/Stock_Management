@@ -53,6 +53,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare('UPDATE requests SET status=?, gsssr_remarks=?, gsssr_approved_by=?, gsssr_approved_at=NOW() WHERE id=?')
                 ->execute([$status, $finalMessage, current_user()['id'], $id]);
 
+            // On rejection, send the original department requests back to IETW's pending list
+if ($decision === 'reject' && !empty($request['source_request_ids'])) {
+    $sourceIds = array_values(array_filter(array_map('intval', explode(',', $request['source_request_ids']))));
+    if ($sourceIds) {
+        $ph = implode(',', array_fill(0, count($sourceIds), '?'));
+        $pdo->prepare(
+            "UPDATE requests
+             SET status = 'PENDING_IETW',
+                 is_consolidated = 0,
+                 ietw_processed_by = NULL,
+                 ietw_processed_at = NULL
+             WHERE id IN ($ph) AND status = 'CONSOLIDATED'"
+        )->execute($sourceIds);
+    }
+}
+
             $pdo->commit();
 
             notify_request_stakeholders($id, $finalMessage, 'GSSSR Decision');

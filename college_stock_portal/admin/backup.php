@@ -1,56 +1,14 @@
 <?php
-// Force PHP to show errors if something fails
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-// 1. Include config first (starts session, connects DB)
-require_once __DIR__ . '/../config/config.php';
-require_once __DIR__ . '/../includes/BackupManager.php';
-
-// 2. Handle download BEFORE any HTML is loaded
-if (isset($_GET['download'])) {
-    
-    // Clear any previous output
-    if (ob_get_level()) {
-        ob_end_clean();
-    }
-
-    $fileName = basename($_GET['download']);
-    $filePath = BASE_PATH . '/backups/' . $fileName;
-
-    if (file_exists($filePath)) {
-        // 1. Check if file is actually readable by the web server (WAMP)
-        if (!is_readable($filePath)) {
-            die("Error: PHP does not have permission to read " . $filePath);
-        }
-
-        // 2. Send headers
-        header('Content-Description: File Transfer');
-        header('Content-Type: application/octet-stream');
-        // Appending .txt to bypass Edge/Chrome security
-        header('Content-Disposition: attachment; filename="'.$fileName.'.txt"');
-        header('Expires: 0');
-        header('Cache-Control: must-revalidate');
-        header('Pragma: public');
-        header('Content-Length: ' . filesize($filePath));
-
-        // 3. Clear output buffer again just in case a warning was printed by PHP
-        if (ob_get_level()) {
-            ob_end_clean();
-        }
-
-        // 4. Output the file
-        readfile($filePath);
-        exit; 
-    } else {
-        die("Error: The file was not found at " . $filePath);
-    }
-}
-
-// 3. If not downloading, then load the layout and show the page
 require_once __DIR__ . '/../includes/layout.php';
-require_role(['GSSSR']);
+require_role(['GSSSR']);          // auth FIRST, before any download
 verify_csrf();
+
+$backup = new BackupManager();
+
+if (isset($_GET['download'])) {
+    log_activity('GSSSR downloaded backup ' . basename($_GET['download']));
+    $backup->download($_GET['download']);   // exits
+}
 
 $backup = new BackupManager();
 $message = '';

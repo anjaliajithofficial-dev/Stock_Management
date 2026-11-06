@@ -96,41 +96,80 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
 
         // Issue stock to each department based on allocation
-        foreach ($allocation as $sid => $itemsAlloc) {
-            foreach ($itemsAlloc as $itemId => $qty) {
-                if ($qty <= 0) continue;
+foreach ($allocation as $sid => $itemsAlloc) {
+    $issuedAnything = false;
 
-                // Check central stock
-                $item = one('SELECT quantity FROM items WHERE id=?', [$itemId]);
-                if (!$item || (int)$item['quantity'] < $qty) {
-                    throw new RuntimeException("Insufficient stock for item ID $itemId. Available: " . ($item['quantity'] ?? 0));
-                }
+    foreach ($itemsAlloc as $itemId => $qty) {
+        if ($qty <= 0) continue;
 
-                // Record OUTWARD transaction (deducts central stock + writes stock book)
-                record_stock_transaction(
-                    $itemId,
-                    'OUTWARD',
-                    $qty,
-                    "Issued to department via distribution of consolidated request #{$request['request_no']}",
-                    null
-                );
-
-                // Add to department inventory — qualified column to avoid ambiguity
-                $stmt = $pdo->prepare(
-                    "INSERT INTO department_inventory (department_id, item_id, quantity)
-                     VALUES (?, ?, ?) AS new
-                     ON DUPLICATE KEY UPDATE department_inventory.quantity = department_inventory.quantity + new.quantity"
-                );
-                $stmt->execute([$sourceRequests[$sid]['department_id'], $itemId, $qty]);
-            }
-
-            // Mark source request as issued
-            $pdo->prepare("UPDATE requests SET status='ISSUED' WHERE id=?")->execute([$sid]);
+        // The department must actually have this item on its own request
+        $srcItem = one(
+            'SELECT id FROM request_items WHERE request_id=? AND item_id=?',
+            [$sid, $itemId]
+        );
+        if (!$srcItem) {
+            throw new RuntimeException(
+                "{$sourceRequests[$sid]['dept_name']} did not request item ID $itemId, so it cannot be allocated."
+            );
         }
+
+        // Check central stock
+        $item = one('SELECT quantity FROM items WHERE id=?', [$itemId]);
+        if (!$item || (int)$item['quantity'] < $qty) {
+            throw new RuntimeException("Insufficient stock for item ID $itemId. Available: " . ($item['quantity'] ?? 0));
+        }
+
+        // Deduct central stock + write stock book
+        record_stock_transaction(
+            $itemId,
+            'OUTWARD',
+            $qty,
+            "Issued to {$sourceRequests[$sid]['dept_name']} via consolidated request #{$request['request_no']}",
+            (int)$srcItem['id']          // links the transaction to the department's request line
+        );
+
+        // Add to department inventory
+        $pdo->prepare(
+            "INSERT INTO department_inventory (department_id, item_id, quantity)
+             VALUES (?, ?, ?) AS new
+             ON DUPLICATE KEY UPDATE department_inventory.quantity = department_inventory.quantity + new.quantity"
+        )->execute([$sourceRequests[$sid]['department_id'], $itemId, $qty]);
+
+        // Record what was approved and issued on the department's own request line
+        $pdo->prepare(
+            'UPDATE request_items SET gsssr_approved_qty = ?, issued_quantity = ? WHERE id = ?'
+        )->execute([$qty, $qty, $srcItem['id']]);
+
+        $issuedAnything = true;
+    }
+
+    // Mark the source request, and stamp who issued it
+    $newStatus = $issuedAnything ? 'ISSUED' : 'CONSOLIDATED';
+    $pdo->prepare(
+        'UPDATE requests SET status=?, admin_issued_by=?, admin_issued_at=NOW() WHERE id=?'
+    )->execute([$newStatus, current_user()['id'], $sid]);
+}
 
         // Mark consolidated request as issued
         $pdo->prepare("UPDATE requests SET status='ISSUED', admin_issued_by=?, admin_issued_at=NOW() WHERE id=?")
             ->execute([current_user()['id'], $consolidatedId]);
+
+        // === NOTIFY THE ORIGINAL DEPARTMENTS ===
+        // Loop through the source requests and notify the specific department users
+        foreach ($sourceRequests as $sid => $src) {
+            $deptId = $src['department_id'];
+            
+            // Find all active users in this department
+            $deptUsers = rows('SELECT id FROM users WHERE department_id = ? AND status = "ACTIVE"', [$deptId]);
+            
+            foreach ($deptUsers as $du) {
+                create_notification(
+                    $du['id'], 
+                    'Stock Issued', 
+                    'The stock for your department\'s request #' . $src['request_no'] . ' has been issued and added to your department inventory.'
+                );
+            }
+        }
 
         $pdo->commit();
         log_activity('IETW distributed and issued stock for consolidated request ID ' . $consolidatedId);

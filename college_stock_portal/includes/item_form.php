@@ -6,7 +6,6 @@
 <div class="modal-body">
   <div class="row g-3">
 
-    <!-- Item Code field (auto-generated in Add mode) -->
     <div class="col-md-4">
       <label class="form-label">
         Item code
@@ -35,13 +34,11 @@
       <?php endif; ?>
     </div>
 
-    <!-- Item Name -->
     <div class="col-md-8">
       <label class="form-label">Item name</label>
       <input name="item_name" class="form-control" required value="<?= e($i['item_name'] ?? '') ?>">
     </div>
 
-    <!-- Category select (with auto-code target) -->
     <div class="col-md-4">
       <label class="form-label">Category</label>
       <select name="category_id"
@@ -63,40 +60,36 @@
       </select>
     </div>
 
-    <!-- Quantity (disabled in edit mode) -->
+    <!-- Quantity: whole numbers; locked in edit mode (change stock via Transactions) -->
     <div class="col-md-2">
       <label class="form-label">Quantity</label>
-      <input name="quantity" type="number" step="0.01" min="0" class="form-control"
-             <?= $isEdit ? 'disabled' : '' ?> required value="<?= e($i['quantity'] ?? '0') ?>">
+      <input name="quantity" type="number" step="1" min="0" class="form-control"
+             <?= $isEdit ? 'disabled' : '' ?> required value="<?= e((string)(int)($i['quantity'] ?? 0)) ?>">
     </div>
 
-    <!-- Unit -->
     <div class="col-md-2">
       <label class="form-label">Unit</label>
       <input name="unit" class="form-control" required value="<?= e($i['unit'] ?? 'Nos') ?>">
     </div>
 
-    <!-- Unit Price -->
+    <!-- Price keeps decimals (paise) -->
     <div class="col-md-2">
       <label class="form-label">Unit price</label>
       <input name="unit_price" type="number" step="0.01" min="0" class="form-control"
-             value="<?= e($i['unit_price'] ?? '0') ?>">
+             value="<?= e((string)($i['unit_price'] ?? '0')) ?>">
     </div>
 
-    <!-- Minimum Stock -->
     <div class="col-md-2">
       <label class="form-label">Min stock</label>
-      <input name="minimum_stock" type="number" step="0.01" min="0" class="form-control"
-             value="<?= e($i['minimum_stock'] ?? '5') ?>">
+      <input name="minimum_stock" type="number" step="1" min="0" class="form-control"
+             value="<?= e((string)(int)($i['minimum_stock'] ?? 5)) ?>">
     </div>
 
-    <!-- Storage Location -->
     <div class="col-md-6">
       <label class="form-label">Storage location</label>
       <input name="storage_location" class="form-control" value="<?= e($i['storage_location'] ?? '') ?>">
     </div>
 
-    <!-- Invoice upload (only in Add mode) -->
     <?php if (!$isEdit): ?>
       <div class="col-md-6">
         <label class="form-label">Invoice PDF/JPG/PNG</label>
@@ -104,7 +97,6 @@
       </div>
     <?php endif; ?>
 
-    <!-- Description -->
     <div class="col-12">
       <label class="form-label">Description</label>
       <textarea name="description" class="form-control" rows="3"><?= e($i['description'] ?? '') ?></textarea>

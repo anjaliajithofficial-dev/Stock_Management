@@ -6,28 +6,40 @@ $pdo    = Database::conn();
 $role   = current_user()['role'];
 $deptId = (int)(current_user()['department_id'] ?? 0);
 
+function valid_date(string $d): bool {
+    $x = DateTime::createFromFormat('Y-m-d', $d);
+    return $x && $x->format('Y-m-d') === $d;
+}
+
 // --- Read date range filters ---
 $from = trim($_GET['from'] ?? '');
 $to   = trim($_GET['to'] ?? '');
 
-// If dates are empty, default to current year (Jan 1 - Dec 31)
-if ($from === '' || $to === '') {
+// Fall back to the current year if dates are empty, invalid or reversed
+if (!valid_date($from) || !valid_date($to) || $from > $to) {
     $currentYear = date('Y');
     $from = $currentYear . '-01-01';
     $to   = $currentYear . '-12-31';
 }
+$toExclusive = date('Y-m-d', strtotime($to . ' +1 day'));   // used only inside SQL
 
 $selectedDept = (int)($_GET['department_id'] ?? 0);
 $effectiveDeptId = in_array($role, ['GSSSR', 'IETW'], true) ? $selectedDept : $deptId;
 
-// --- Recent transactions (no date filter) ---
-$recent = rows(
-    'SELECT st.*, i.item_name, u.name
-     FROM stock_transactions st
-     JOIN items i ON i.id=st.item_id
-     LEFT JOIN users u ON u.id=st.created_by
-     ORDER BY st.id DESC LIMIT 8'
-);
+// Department-level requests only (consolidated parents have source_request_ids)
+$onlyDeptRequests = '(r.source_request_ids IS NULL OR r.source_request_ids = "")';
+
+// --- Recent transactions (admins only: department users should not see staff names) ---
+$recent = [];
+if (in_array($role, ['GSSSR', 'IETW'], true)) {
+    $recent = rows(
+        'SELECT st.*, i.item_name, u.name
+         FROM stock_transactions st
+         JOIN items i ON i.id=st.item_id
+         LEFT JOIN users u ON u.id=st.created_by
+         ORDER BY st.id DESC LIMIT 8'
+    );
+}
 
 $departments = rows('SELECT id, code, name FROM departments WHERE code <> "ADMIN" ORDER BY code');
 
@@ -38,7 +50,7 @@ if ($role === 'DEPARTMENT') {
     $stmt->execute([$deptId]);
     $myRequests = (int)$stmt->fetchColumn();
 
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM requests WHERE department_id = ? AND status IN ('PENDING_IETW','CONSOLIDATED_BY_IETW')");
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM requests WHERE department_id = ? AND status IN ('PENDING_IETW','CONSOLIDATED_BY_IETW','CONSOLIDATED','REJECTED_BY_GSSSR')");
     $stmt->execute([$deptId]);
     $myPending = (int)$stmt->fetchColumn();
 
@@ -48,20 +60,19 @@ if ($role === 'DEPARTMENT') {
 
     $stmt = $pdo->prepare('SELECT COALESCE(SUM(ri.issued_quantity),0) FROM request_items ri JOIN requests r ON r.id=ri.request_id WHERE r.department_id = ?');
     $stmt->execute([$deptId]);
-    $issuedItems = round((float)$stmt->fetchColumn()); // Rounded to whole number
+    $issuedItems = (int)round((float)$stmt->fetchColumn());
 
     $cards = [
-        'My Requests'         => $myRequests,
-        'My Pending Requests' => $myPending,
-        'My Approved Requests'=> $myApproved,
+        'My Requests'             => $myRequests,
+        'My Pending Requests'     => $myPending,
+        'My Approved Requests'    => $myApproved,
         'Items Issued to My Dept' => $issuedItems,
     ];
 } else {
-    // GSSSR and IETW roles
     $totalItems = (int)$pdo->query('SELECT COUNT(*) FROM items WHERE deleted_at IS NULL AND status="ACTIVE"')->fetchColumn();
     $lowStock = (int)$pdo->query('SELECT COUNT(*) FROM items WHERE deleted_at IS NULL AND status="ACTIVE" AND quantity < minimum_stock')->fetchColumn();
     $pending = (int)$pdo->query("SELECT COUNT(*) FROM requests WHERE status IN ('PENDING_IETW','CONSOLIDATED_BY_IETW')")->fetchColumn();
-    $issued = round((float)$pdo->query("SELECT COALESCE(SUM(quantity),0) FROM stock_transactions WHERE type='OUTWARD'")->fetchColumn()); // Rounded to whole number
+    $issued = (int)round((float)$pdo->query("SELECT COALESCE(SUM(quantity),0) FROM stock_transactions WHERE type='OUTWARD'")->fetchColumn());
 
     $cards = [
         'Total Items'      => $totalItems,
@@ -72,15 +83,11 @@ if ($role === 'DEPARTMENT') {
 }
 
 // --- Department usage and trend data (using date range) ---
-$periodCondition = 'DATE(r.created_at) BETWEEN ? AND ?';
-$periodParams = [$from, $to];
-
 $deptUsage = [];
 $trendRows = [];
 
 if (in_array($role, ['GSSSR', 'IETW'], true)) {
-    // Department usage query
-    $deptParams = [$from, $to];
+    $deptParams = [$from, $toExclusive];
     $deptWhere = '';
     if ($effectiveDeptId > 0) {
         $deptWhere = ' AND d.id = ?';
@@ -91,7 +98,7 @@ if (in_array($role, ['GSSSR', 'IETW'], true)) {
                 COALESCE(SUM(ri.requested_quantity),0) requested_qty,
                 COALESCE(SUM(ri.issued_quantity),0) issued_qty
          FROM departments d
-         LEFT JOIN requests r ON r.department_id = d.id AND DATE(r.created_at) BETWEEN ? AND ?
+         LEFT JOIN requests r ON r.department_id = d.id AND r.created_at >= ? AND r.created_at < ?
          LEFT JOIN request_items ri ON ri.request_id = r.id
          WHERE d.code <> 'ADMIN' $deptWhere
          GROUP BY d.id, d.code, d.name
@@ -99,13 +106,11 @@ if (in_array($role, ['GSSSR', 'IETW'], true)) {
         $deptParams
     );
 
-    // Trend query (monthly breakdown)
-    $trendParams = [$from, $to];
+    $trendParams = [$from, $toExclusive];
+    $trendWhere = '';
     if ($effectiveDeptId > 0) {
         $trendWhere = ' AND r.department_id = ?';
         $trendParams[] = $effectiveDeptId;
-    } else {
-        $trendWhere = '';
     }
     $trendRows = rows(
         "SELECT DATE_FORMAT(r.created_at, '%Y-%m') bucket,
@@ -113,23 +118,22 @@ if (in_array($role, ['GSSSR', 'IETW'], true)) {
                 COALESCE(SUM(ri.issued_quantity),0) issued_qty
          FROM requests r
          JOIN request_items ri ON ri.request_id = r.id
-         WHERE DATE(r.created_at) BETWEEN ? AND ? $trendWhere
+         WHERE r.created_at >= ? AND r.created_at < ? AND $onlyDeptRequests $trendWhere
          GROUP BY bucket
          ORDER BY bucket",
         $trendParams
     );
 } else {
-    // DEPARTMENT role
     $trendRows = rows(
         "SELECT DATE_FORMAT(r.created_at, '%Y-%m') bucket,
                 COALESCE(SUM(ri.requested_quantity),0) requested_qty,
                 COALESCE(SUM(ri.issued_quantity),0) issued_qty
          FROM requests r
          JOIN request_items ri ON ri.request_id = r.id
-         WHERE r.department_id = ? AND DATE(r.created_at) BETWEEN ? AND ?
+         WHERE r.department_id = ? AND r.created_at >= ? AND r.created_at < ?
          GROUP BY bucket
          ORDER BY bucket",
-        [$deptId, $from, $to]
+        [$deptId, $from, $toExclusive]
     );
 
     $deptUsage = rows(
@@ -137,11 +141,11 @@ if (in_array($role, ['GSSSR', 'IETW'], true)) {
                 COALESCE(SUM(ri.requested_quantity),0) requested_qty,
                 COALESCE(SUM(ri.issued_quantity),0) issued_qty
          FROM departments d
-         LEFT JOIN requests r ON r.department_id = d.id
+         LEFT JOIN requests r ON r.department_id = d.id AND r.created_at >= ? AND r.created_at < ?
          LEFT JOIN request_items ri ON ri.request_id = r.id
          WHERE d.id = ?
          GROUP BY d.id, d.code, d.name",
-        [$deptId]
+        [$from, $toExclusive, $deptId]
     );
 }
 
@@ -161,14 +165,21 @@ if ($role === 'DEPARTMENT') {
     $myPendingRequests = rows(
         "SELECT request_no, purpose, status, created_at
          FROM requests
-         WHERE department_id = ? AND status IN ('PENDING_IETW','CONSOLIDATED_BY_IETW')
+         WHERE department_id = ? AND status IN ('PENDING_IETW','CONSOLIDATED_BY_IETW','CONSOLIDATED','REJECTED_BY_GSSSR')
          ORDER BY created_at DESC LIMIT 8",
         [$deptId]
     );
 }
 
-// --- Page label for display ---
 $periodLabel = date('d-m-Y', strtotime($from)) . ' to ' . date('d-m-Y', strtotime($to));
+
+// --- Last successful backup (GSSSR only) ---
+$lastBackup = 0;
+if ($role === 'GSSSR') {
+    foreach (glob(BASE_PATH . '/backups/*.sql') ?: [] as $f) {
+        if (filesize($f) > 0) $lastBackup = max($lastBackup, filemtime($f));
+    }
+}
 
 render_header('Dashboard');
 ?>
@@ -183,6 +194,15 @@ render_header('Dashboard');
   <span class="badge bg-info text-dark fs-6 px-3 py-2"><i class="bi bi-layers me-1"></i>IETW - Consolidator</span>
   <?php endif; ?>
 </div>
+
+<?php if ($role === 'GSSSR'): ?>
+  <?php $days = $lastBackup ? floor((time() - $lastBackup) / 86400) : null; ?>
+  <div class="alert alert-<?= ($days === null || $days >= 2) ? 'danger' : 'success' ?> py-2">
+    <i class="bi bi-shield-check me-1"></i>
+    <?= $lastBackup ? 'Last successful backup: ' . date('d-m-Y H:i', $lastBackup) : 'No backup found!' ?>
+    <?php if ($days === null || $days >= 2): ?> — <a href="<?= BASE_URL ?>/admin/backup.php">create one now</a><?php endif; ?>
+  </div>
+<?php endif; ?>
 
 <div class="row g-3 mb-4">
   <?php foreach ($cards as $label => $value): ?>
@@ -236,7 +256,7 @@ render_header('Dashboard');
         <div class="mb-3">
           <div class="d-flex justify-content-between small fw-semibold">
             <span><?= e($d['code']) ?> - <?= e($d['name']) ?></span>
-            <span>Req <?= e($d['requested_qty']) ?> | Issued <?= e($d['issued_qty']) ?></span>
+            <span>Req <?= e((string)(int)$d['requested_qty']) ?> | Issued <?= e((string)(int)$d['issued_qty']) ?></span>
           </div>
           <div class="usage-track mt-1">
             <div class="usage-bar requested" style="width:<?= max(2, ((float)$d['requested_qty'] / $maxDept) * 100) ?>%"></div>
@@ -259,7 +279,7 @@ render_header('Dashboard');
             <div class="usage-bar requested" style="width:<?= max(2, ((float)$row['requested_qty'] / $maxTrend) * 100) ?>%"></div>
             <div class="usage-bar issued" style="width:<?= max(2, ((float)$row['issued_qty'] / $maxTrend) * 100) ?>%"></div>
           </div>
-          <div class="year-value"><?= e($row['issued_qty']) ?> issued</div>
+          <div class="year-value"><?= e((string)(int)$row['issued_qty']) ?> issued</div>
         </div>
         <?php endforeach; ?>
         <?php if (!$trendRows): ?><div class="text-muted">No request history for the selected period.</div><?php endif; ?>
@@ -271,13 +291,13 @@ render_header('Dashboard');
 <div class="row g-3 mb-4">
   <div class="col-xl-7">
     <div class="card metric-card h-100">
-      <div class="card-header bg-white fw-semibold">My Department Request vs Issue</div>
+      <div class="card-header bg-white fw-semibold">My Department Request vs Issue - <?= e($periodLabel) ?></div>
       <div class="card-body">
         <?php foreach ($deptUsage as $d): ?>
         <div class="mb-3">
           <div class="d-flex justify-content-between small fw-semibold">
             <span><?= e($d['code']) ?> - <?= e($d['name']) ?></span>
-            <span>Req <?= e($d['requested_qty']) ?> | Issued <?= e($d['issued_qty']) ?></span>
+            <span>Req <?= e((string)(int)$d['requested_qty']) ?> | Issued <?= e((string)(int)$d['issued_qty']) ?></span>
           </div>
           <div class="usage-track mt-1">
             <div class="usage-bar requested" style="width:<?= max(2, ((float)$d['requested_qty'] / $maxDept) * 100) ?>%"></div>
@@ -299,7 +319,7 @@ render_header('Dashboard');
             <div class="usage-bar requested" style="width:<?= max(2, ((float)$row['requested_qty'] / $maxTrend) * 100) ?>%"></div>
             <div class="usage-bar issued" style="width:<?= max(2, ((float)$row['issued_qty'] / $maxTrend) * 100) ?>%"></div>
           </div>
-          <div class="year-value"><?= e($row['issued_qty']) ?> issued</div>
+          <div class="year-value"><?= e((string)(int)$row['issued_qty']) ?> issued</div>
         </div>
         <?php endforeach; ?>
         <?php if (!$trendRows): ?><div class="text-muted">No department trend data for the selected period.</div><?php endif; ?>
@@ -323,13 +343,15 @@ render_header('Dashboard');
         </tr>
         <?php endforeach; ?>
         <?php if (!$myPendingRequests): ?>
-        <tr><td colspan="4" class="text-muted text-center py-4">No pending requests for your department.<?php endif; ?>
+        <tr><td colspan="4" class="text-muted text-center py-4">No pending requests for your department.</td></tr>
+        <?php endif; ?>
       </tbody>
     </table>
   </div>
 </div>
 <?php endif; ?>
 
+<?php if (in_array($role, ['GSSSR', 'IETW'], true)): ?>
 <div class="card metric-card">
   <div class="card-header bg-white fw-semibold">Recent Transactions</div>
   <div class="table-responsive">
@@ -341,8 +363,8 @@ render_header('Dashboard');
         <td><?= e($r['created_at']) ?></td>
         <td><?= e($r['item_name']) ?></td>
         <td><span class="badge text-bg-secondary"><?= e($r['type']) ?></span></td>
-        <td><?= e($r['quantity']) ?></td>
-        <td><?= e($r['new_quantity']) ?></td>
+        <td><?= e((string)(float)$r['quantity']) ?></td>
+        <td><?= e((string)(float)$r['new_quantity']) ?></td>
         <td><?= e($r['name']) ?></td>
       </tr>
       <?php endforeach; ?>
@@ -350,4 +372,5 @@ render_header('Dashboard');
     </table>
   </div>
 </div>
+<?php endif; ?>
 <?php render_footer(); ?>
